@@ -16,6 +16,7 @@ class TuyaEuromACAccessory {
         targetTemp: 20,
         targetMode: 0, // Auto=0, Heat=1, Cool=2
         fanSpeed: 100,
+        displayUnits: false, // false = C, true = F
     };
     pendingSetData = {};
     debounceTimeout = null;
@@ -69,6 +70,10 @@ class TuyaEuromACAccessory {
         this.service.getCharacteristic(this.platform.Characteristic.RotationSpeed)
             .onSet(this.setRotationSpeed.bind(this))
             .onGet(this.getRotationSpeed.bind(this));
+        // Register handlers for TemperatureDisplayUnits
+        this.service.getCharacteristic(this.platform.Characteristic.TemperatureDisplayUnits)
+            .onSet(this.setTemperatureDisplayUnits.bind(this))
+            .onGet(this.getTemperatureDisplayUnits.bind(this));
         // Initialize Tuya Device
         this.device = new TuyaDevice({
             id: this.deviceConfig.id,
@@ -180,6 +185,14 @@ class TuyaEuromACAccessory {
                 this.state.fanSpeed = 25;
             }
             this.service.updateCharacteristic(this.platform.Characteristic.RotationSpeed, this.state.fanSpeed);
+        }
+        // Temperature Display Units (DP 109)
+        if (dps['109'] !== undefined) {
+            this.state.displayUnits = dps['109'] === true;
+            const unit = this.state.displayUnits
+                ? this.platform.Characteristic.TemperatureDisplayUnits.FAHRENHEIT
+                : this.platform.Characteristic.TemperatureDisplayUnits.CELSIUS;
+            this.service.updateCharacteristic(this.platform.Characteristic.TemperatureDisplayUnits, unit);
         }
         if (updated) {
             this.updateDynamicCurrentState();
@@ -325,6 +338,18 @@ class TuyaEuromACAccessory {
     }
     async getRotationSpeed() {
         return this.state.fanSpeed;
+    }
+    async setTemperatureDisplayUnits(value) {
+        const isFahrenheit = value === this.platform.Characteristic.TemperatureDisplayUnits.FAHRENHEIT;
+        if (this.state.displayUnits !== isFahrenheit) {
+            this.state.displayUnits = isFahrenheit;
+            this.queueTuyaSet('109', isFahrenheit);
+        }
+    }
+    async getTemperatureDisplayUnits() {
+        return this.state.displayUnits
+            ? this.platform.Characteristic.TemperatureDisplayUnits.FAHRENHEIT
+            : this.platform.Characteristic.TemperatureDisplayUnits.CELSIUS;
     }
 }
 exports.TuyaEuromACAccessory = TuyaEuromACAccessory;
