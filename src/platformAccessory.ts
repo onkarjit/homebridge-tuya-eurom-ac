@@ -192,11 +192,11 @@ export class TuyaEuromACAccessory {
     if (dps['104'] !== undefined) {
       const fanStr = String(dps['104']);
       if (fanStr === '1') {
-        this.state.fanSpeed = 33;
-      } else if (fanStr === '2') {
-        this.state.fanSpeed = 66;
-      } else if (fanStr === '3') {
         this.state.fanSpeed = 100;
+      } else if (fanStr === '2') {
+        this.state.fanSpeed = 50;
+      } else if (fanStr === '3') {
+        this.state.fanSpeed = 25;
       }
       this.service.updateCharacteristic(this.platform.Characteristic.RotationSpeed, this.state.fanSpeed);
     }
@@ -335,9 +335,9 @@ export class TuyaEuromACAccessory {
     const speed = value as number;
     if (this.state.fanSpeed !== speed) {
       this.state.fanSpeed = speed;
-      let tuyaSpeed = '3'; // High by default
+      let tuyaSpeed = '1'; // High by default
       if (speed <= 33) {
-        tuyaSpeed = '1'; // Low
+        tuyaSpeed = '3'; // Low
       } else if (speed <= 66) {
         tuyaSpeed = '2'; // Med
       }
