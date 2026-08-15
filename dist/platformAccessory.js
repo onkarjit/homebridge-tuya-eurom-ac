@@ -135,6 +135,9 @@ class TuyaEuromACAccessory {
         if (dps['1'] !== undefined) {
             this.state.active = dps['1'] ? 1 : 0;
             this.service.updateCharacteristic(this.platform.Characteristic.Active, this.state.active);
+            if (this.state.active === 0) {
+                this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState, this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE);
+            }
             updated = true;
         }
         // Target Temperature (DP 2)
@@ -239,26 +242,39 @@ class TuyaEuromACAccessory {
         if (this.state.active !== isActive) {
             this.state.active = isActive;
             this.queueTuyaSet('1', isActive === 1);
-            this.updateDynamicCurrentState();
+            if (isActive === 0) {
+                this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState, this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE);
+            }
+            else {
+                this.updateDynamicCurrentState();
+            }
         }
     }
     async getActive() {
         return this.state.active;
     }
     async getCurrentHeaterCoolerState() {
-        let currentState = this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE;
-        if (this.state.active === 1) {
-            if (this.state.targetMode === this.platform.Characteristic.TargetHeaterCoolerState.COOL) {
-                currentState = this.platform.Characteristic.CurrentHeaterCoolerState.COOLING;
+        if (this.state.active === 0) {
+            return this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE;
+        }
+        if (this.state.targetMode === this.platform.Characteristic.TargetHeaterCoolerState.COOL) {
+            return this.platform.Characteristic.CurrentHeaterCoolerState.COOLING;
+        }
+        else if (this.state.targetMode === this.platform.Characteristic.TargetHeaterCoolerState.HEAT) {
+            return this.platform.Characteristic.CurrentHeaterCoolerState.HEATING;
+        }
+        else {
+            // Auto mode
+            if (this.state.currentTemp > this.state.targetTemp) {
+                return this.platform.Characteristic.CurrentHeaterCoolerState.COOLING;
             }
-            else if (this.state.targetMode === this.platform.Characteristic.TargetHeaterCoolerState.HEAT) {
-                currentState = this.platform.Characteristic.CurrentHeaterCoolerState.HEATING;
+            else if (this.state.currentTemp < this.state.targetTemp) {
+                return this.platform.Characteristic.CurrentHeaterCoolerState.HEATING;
             }
             else {
-                currentState = this.platform.Characteristic.CurrentHeaterCoolerState.IDLE;
+                return this.platform.Characteristic.CurrentHeaterCoolerState.IDLE;
             }
         }
-        return currentState;
     }
     async setTargetHeaterCoolerState(value) {
         const targetMode = value;
