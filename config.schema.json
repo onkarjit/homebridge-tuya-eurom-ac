@@ -1,0 +1,41 @@
+{
+  "pluginAlias": "TuyaEuromAC",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "required": true,
+        "default": "Eurom AC"
+      },
+      "id": {
+        "title": "Device ID",
+        "type": "string",
+        "required": true,
+        "description": "The Tuya Device ID"
+      },
+      "key": {
+        "title": "Local Key",
+        "type": "string",
+        "required": true,
+        "description": "The Tuya Local Key"
+      },
+      "ip": {
+        "title": "IP Address (Optional)",
+        "type": "string",
+        "required": false,
+        "description": "The IP Address of the AC on your local network. Leave blank for auto-discovery."
+      },
+      "version": {
+        "title": "Protocol Version",
+        "type": "string",
+        "required": false,
+        "default": "3.4",
+        "description": "Tuya protocol version (e.g., 3.1, 3.3, 3.4)"
+      }
+    }
+  }
+}
