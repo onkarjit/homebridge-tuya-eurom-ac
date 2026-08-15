@@ -6,6 +6,7 @@ export class TuyaEuromACAccessory {
   private service: Service;
   private device: any;
   private connected = false;
+  private isConnecting = false;
 
   // Local state cache
   private state = {
@@ -99,6 +100,8 @@ export class TuyaEuromACAccessory {
   }
 
   private connectTuya() {
+    if (this.isConnecting || this.connected) return;
+    this.isConnecting = true;
     this.platform.log.info('Connecting to Tuya device...');
     
     // Find device on network then connect
@@ -107,6 +110,7 @@ export class TuyaEuromACAccessory {
       this.device.connect();
     }).catch((error: any) => {
       this.platform.log.error('Tuya find error:', error);
+      this.isConnecting = false;
       this.scheduleReconnect();
     });
   }
@@ -115,17 +119,22 @@ export class TuyaEuromACAccessory {
     this.device.on('connected', () => {
       this.platform.log.info('Connected to Tuya device!');
       this.connected = true;
+      this.isConnecting = false;
     });
 
     this.device.on('disconnected', () => {
       this.platform.log.warn('Disconnected from Tuya device.');
       this.connected = false;
+      this.isConnecting = false;
+      this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
 
     this.device.on('error', (error: any) => {
       this.platform.log.error('Tuya device error!', error);
       this.connected = false;
+      this.isConnecting = false;
+      this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
 
@@ -153,7 +162,7 @@ export class TuyaEuromACAccessory {
       if (!this.connected) {
         this.connectTuya();
       }
-    }, 10000); // Try to reconnect every 10 seconds
+    }, 5000); // Try to reconnect every 5 seconds
   }
 
   private updateStateFromTuya(dps: any) {
@@ -264,8 +273,9 @@ export class TuyaEuromACAccessory {
 
   private sendPendingSetData() {
     if (!this.connected) {
-      this.platform.log.warn('Cannot send command to Tuya, device disconnected.');
+      this.platform.log.warn('Cannot send command to Tuya, device disconnected. Triggering reconnect...');
       this.pendingSetData = {};
+      this.scheduleReconnect();
       return;
     }
 
@@ -273,12 +283,25 @@ export class TuyaEuromACAccessory {
     this.pendingSetData = {}; // Clear pending
 
     this.platform.log.debug('Sending to Tuya:', dataToSend);
-    this.device.set({
-      multiple: true,
-      data: dataToSend
-    }).catch((error: any) => {
-      this.platform.log.error('Tuya set error:', error);
-    });
+    
+    try {
+      this.device.set({
+        multiple: true,
+        data: dataToSend
+      }).catch((error: any) => {
+        this.platform.log.debug('Tuya set error/timeout:', error);
+        this.connected = false;
+        this.isConnecting = false;
+        this.device.disconnect();
+        this.scheduleReconnect();
+      });
+    } catch (error: any) {
+      this.platform.log.debug('Tuya set exception:', error);
+      this.connected = false;
+      this.isConnecting = false;
+      this.device.disconnect();
+      this.scheduleReconnect();
+    }
   }
 
   // --- Characteristic Handlers ---
