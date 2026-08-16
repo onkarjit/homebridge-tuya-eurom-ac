@@ -21,6 +21,7 @@ export class TuyaEuromACAccessory {
   private pendingSetData: Record<string, any> = {};
   private debounceTimeout: NodeJS.Timeout | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly platform: TuyaEuromACPlatform,
@@ -120,12 +121,14 @@ export class TuyaEuromACAccessory {
       this.platform.log.info('Connected to Tuya device!');
       this.connected = true;
       this.isConnecting = false;
+      this.startHeartbeat();
     });
 
     this.device.on('disconnected', () => {
       this.platform.log.warn('Disconnected from Tuya device.');
       this.connected = false;
       this.isConnecting = false;
+      this.stopHeartbeat();
       this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
@@ -134,6 +137,7 @@ export class TuyaEuromACAccessory {
       this.platform.log.error('Tuya device error!', error);
       this.connected = false;
       this.isConnecting = false;
+      this.stopHeartbeat();
       this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
@@ -152,6 +156,26 @@ export class TuyaEuromACAccessory {
         this.updateStateFromTuya(data.dps);
       }
     });
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat(); // Ensure no duplicates
+    this.heartbeatInterval = setInterval(() => {
+      if (this.connected) {
+        this.platform.log.debug('Sending heartbeat ping to Tuya device...');
+        this.device.get({ schema: true }).catch((error: any) => {
+          this.platform.log.debug('Heartbeat ping failed:', error);
+          // Let the error listener handle the disconnection if the socket dropped
+        });
+      }
+    }, 45000); // 45 seconds
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
   }
 
   private scheduleReconnect() {

@@ -22,6 +22,7 @@ class TuyaEuromACAccessory {
     pendingSetData = {};
     debounceTimeout = null;
     reconnectTimeout = null;
+    heartbeatInterval = null;
     constructor(platform, accessory, deviceConfig) {
         this.platform = platform;
         this.accessory = accessory;
@@ -105,11 +106,13 @@ class TuyaEuromACAccessory {
             this.platform.log.info('Connected to Tuya device!');
             this.connected = true;
             this.isConnecting = false;
+            this.startHeartbeat();
         });
         this.device.on('disconnected', () => {
             this.platform.log.warn('Disconnected from Tuya device.');
             this.connected = false;
             this.isConnecting = false;
+            this.stopHeartbeat();
             this.device.disconnect(); // Explicitly destroy socket
             this.scheduleReconnect();
         });
@@ -117,6 +120,7 @@ class TuyaEuromACAccessory {
             this.platform.log.error('Tuya device error!', error);
             this.connected = false;
             this.isConnecting = false;
+            this.stopHeartbeat();
             this.device.disconnect(); // Explicitly destroy socket
             this.scheduleReconnect();
         });
@@ -133,6 +137,24 @@ class TuyaEuromACAccessory {
                 this.updateStateFromTuya(data.dps);
             }
         });
+    }
+    startHeartbeat() {
+        this.stopHeartbeat(); // Ensure no duplicates
+        this.heartbeatInterval = setInterval(() => {
+            if (this.connected) {
+                this.platform.log.debug('Sending heartbeat ping to Tuya device...');
+                this.device.get({ schema: true }).catch((error) => {
+                    this.platform.log.debug('Heartbeat ping failed:', error);
+                    // Let the error listener handle the disconnection if the socket dropped
+                });
+            }
+        }, 45000); // 45 seconds
+    }
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
     }
     scheduleReconnect() {
         if (this.reconnectTimeout) {
