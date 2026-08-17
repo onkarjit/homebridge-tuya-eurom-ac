@@ -23,6 +23,7 @@ class TuyaEuromACAccessory {
     debounceTimeout = null;
     reconnectTimeout = null;
     heartbeatInterval = null;
+    pendingCommandsQueue = [];
     constructor(platform, accessory, deviceConfig) {
         this.platform = platform;
         this.accessory = accessory;
@@ -107,6 +108,17 @@ class TuyaEuromACAccessory {
             this.connected = true;
             this.isConnecting = false;
             this.startHeartbeat();
+            // Process pending commands
+            if (this.pendingCommandsQueue.length > 0) {
+                this.platform.log.info(`Resending ${this.pendingCommandsQueue.length} queued commands...`);
+                const queue = [...this.pendingCommandsQueue];
+                this.pendingCommandsQueue = [];
+                for (const data of queue) {
+                    this.device.set({ multiple: true, data }).catch((error) => {
+                        this.platform.log.error('Failed to resend queued command:', error);
+                    });
+                }
+            }
         });
         this.device.on('disconnected', () => {
             this.platform.log.warn('Disconnected from Tuya device.');
@@ -164,7 +176,7 @@ class TuyaEuromACAccessory {
             if (!this.connected) {
                 this.connectTuya();
             }
-        }, 5000); // Try to reconnect every 5 seconds
+        }, 10000); // Try to reconnect every 10 seconds to reduce ECONNRESET spam
     }
     updateStateFromTuya(dps) {
         let updated = false;
@@ -266,21 +278,24 @@ class TuyaEuromACAccessory {
         }, 400);
     }
     sendPendingSetData() {
+        const dataToSend = { ...this.pendingSetData };
+        if (Object.keys(dataToSend).length === 0)
+            return;
+        this.pendingSetData = {}; // Clear pending
         if (!this.connected) {
-            this.platform.log.warn('Cannot send command to Tuya, device disconnected. Triggering reconnect...');
-            this.pendingSetData = {};
+            this.platform.log.warn('Cannot send command to Tuya, device disconnected. Queueing command and triggering reconnect...');
+            this.pendingCommandsQueue.push(dataToSend);
             this.scheduleReconnect();
             return;
         }
-        const dataToSend = { ...this.pendingSetData };
-        this.pendingSetData = {}; // Clear pending
         this.platform.log.debug('Sending to Tuya:', dataToSend);
         try {
             this.device.set({
                 multiple: true,
                 data: dataToSend
             }).catch((error) => {
-                this.platform.log.debug('Tuya set error/timeout:', error);
+                this.platform.log.debug('Tuya set error/timeout. Queueing command:', error);
+                this.pendingCommandsQueue.push(dataToSend);
                 this.connected = false;
                 this.isConnecting = false;
                 this.device.disconnect();
@@ -288,7 +303,8 @@ class TuyaEuromACAccessory {
             });
         }
         catch (error) {
-            this.platform.log.debug('Tuya set exception:', error);
+            this.platform.log.debug('Tuya set exception. Queueing command:', error);
+            this.pendingCommandsQueue.push(dataToSend);
             this.connected = false;
             this.isConnecting = false;
             this.device.disconnect();

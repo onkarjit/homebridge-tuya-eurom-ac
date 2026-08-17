@@ -22,6 +22,7 @@ export class TuyaEuromACAccessory {
   private debounceTimeout: NodeJS.Timeout | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private pendingCommandsQueue: Array<Record<string, any>> = [];
 
   constructor(
     private readonly platform: TuyaEuromACPlatform,
@@ -122,6 +123,18 @@ export class TuyaEuromACAccessory {
       this.connected = true;
       this.isConnecting = false;
       this.startHeartbeat();
+
+      // Process pending commands
+      if (this.pendingCommandsQueue.length > 0) {
+        this.platform.log.info(`Resending ${this.pendingCommandsQueue.length} queued commands...`);
+        const queue = [...this.pendingCommandsQueue];
+        this.pendingCommandsQueue = [];
+        for (const data of queue) {
+          this.device.set({ multiple: true, data }).catch((error: any) => {
+            this.platform.log.error('Failed to resend queued command:', error);
+          });
+        }
+      }
     });
 
     this.device.on('disconnected', () => {
@@ -186,7 +199,7 @@ export class TuyaEuromACAccessory {
       if (!this.connected) {
         this.connectTuya();
       }
-    }, 5000); // Try to reconnect every 5 seconds
+    }, 10000); // Try to reconnect every 10 seconds to reduce ECONNRESET spam
   }
 
   private updateStateFromTuya(dps: any) {
@@ -296,15 +309,17 @@ export class TuyaEuromACAccessory {
   }
 
   private sendPendingSetData() {
+    const dataToSend = { ...this.pendingSetData };
+    if (Object.keys(dataToSend).length === 0) return;
+
+    this.pendingSetData = {}; // Clear pending
+
     if (!this.connected) {
-      this.platform.log.warn('Cannot send command to Tuya, device disconnected. Triggering reconnect...');
-      this.pendingSetData = {};
+      this.platform.log.warn('Cannot send command to Tuya, device disconnected. Queueing command and triggering reconnect...');
+      this.pendingCommandsQueue.push(dataToSend);
       this.scheduleReconnect();
       return;
     }
-
-    const dataToSend = { ...this.pendingSetData };
-    this.pendingSetData = {}; // Clear pending
 
     this.platform.log.debug('Sending to Tuya:', dataToSend);
     
@@ -313,14 +328,16 @@ export class TuyaEuromACAccessory {
         multiple: true,
         data: dataToSend
       }).catch((error: any) => {
-        this.platform.log.debug('Tuya set error/timeout:', error);
+        this.platform.log.debug('Tuya set error/timeout. Queueing command:', error);
+        this.pendingCommandsQueue.push(dataToSend);
         this.connected = false;
         this.isConnecting = false;
         this.device.disconnect();
         this.scheduleReconnect();
       });
     } catch (error: any) {
-      this.platform.log.debug('Tuya set exception:', error);
+      this.platform.log.debug('Tuya set exception. Queueing command:', error);
+      this.pendingCommandsQueue.push(dataToSend);
       this.connected = false;
       this.isConnecting = false;
       this.device.disconnect();
