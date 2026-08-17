@@ -124,16 +124,36 @@ export class TuyaEuromACAccessory {
       this.isConnecting = false;
       this.startHeartbeat();
 
-      // Process pending commands
+      // Process pending commands after a delay to allow crypto handshake
       if (this.pendingCommandsQueue.length > 0) {
-        this.platform.log.info(`Resending ${this.pendingCommandsQueue.length} queued commands...`);
-        const queue = [...this.pendingCommandsQueue];
-        this.pendingCommandsQueue = [];
-        for (const data of queue) {
-          this.device.set({ multiple: true, data }).catch((error: any) => {
-            this.platform.log.error('Failed to resend queued command:', error);
-          });
-        }
+        this.platform.log.info(`Waiting 2500ms before resending ${this.pendingCommandsQueue.length} queued commands...`);
+        setTimeout(() => {
+          if (!this.connected) return;
+
+          const queue = [...this.pendingCommandsQueue];
+          for (const data of queue) {
+            this.device.set({ multiple: true, data })
+              .then(() => {
+                // On success, remove this specific command from the queue
+                const index = this.pendingCommandsQueue.indexOf(data);
+                if (index > -1) {
+                  this.pendingCommandsQueue.splice(index, 1);
+                }
+              })
+              .catch((error: any) => {
+                this.platform.log.error('Failed to resend queued command, keeping in queue:', error);
+                
+                // Trigger disconnect & reconnect flow
+                if (this.connected) {
+                  this.connected = false;
+                  this.isConnecting = false;
+                  this.stopHeartbeat();
+                  this.device.disconnect();
+                  this.scheduleReconnect();
+                }
+              });
+          }
+        }, 2500);
       }
     });
 
