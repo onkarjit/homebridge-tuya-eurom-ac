@@ -83,6 +83,7 @@ class TuyaEuromACAccessory {
             key: this.deviceConfig.key,
             ip: this.deviceConfig.ip,
             version: this.deviceConfig.version,
+            timeout: 7.5,
         });
         this.setupTuyaListeners();
         this.connectTuya();
@@ -270,10 +271,10 @@ class TuyaEuromACAccessory {
         if (this.debounceTimeout) {
             clearTimeout(this.debounceTimeout);
         }
-        // 400ms debounce
+        // 800ms debounce
         this.debounceTimeout = setTimeout(() => {
             this.sendQueuedPayload();
-        }, 400);
+        }, 800);
     }
     sendQueuedPayload() {
         if (Object.keys(this.queuedPayload).length === 0)
