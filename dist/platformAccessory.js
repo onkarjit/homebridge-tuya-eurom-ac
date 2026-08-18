@@ -24,6 +24,7 @@ class TuyaEuromACAccessory {
     heartbeatInterval = null;
     queuedPayload = {};
     isSending = false;
+    isHardwareCoolingDown = false;
     tempDebounceTimer;
     constructor(platform, accessory, deviceConfig) {
         this.platform = platform;
@@ -295,6 +296,11 @@ class TuyaEuromACAccessory {
             this.platform.log.debug('Command already in-flight. Queuing...');
             return;
         }
+        // Hardware Cooldown Lock
+        if (this.isHardwareCoolingDown) {
+            this.platform.log.debug('Hardware is cooling down from mechanical shift. Queuing...');
+            return;
+        }
         if (!this.connected) {
             this.platform.log.warn('Device disconnected. Payload queued for reconnect.');
             this.scheduleReconnect();
@@ -309,9 +315,22 @@ class TuyaEuromACAccessory {
             data: dataToSend
         }).then(() => {
             this.isSending = false;
-            // If new commands came in while sending, flush them now
-            if (Object.keys(this.queuedPayload).length > 0) {
-                this.sendQueuedPayload();
+            // Trigger hardware cooldown if this was a heavy mechanical shift
+            if (dataToSend['1'] !== undefined || dataToSend['101'] !== undefined) {
+                this.isHardwareCoolingDown = true;
+                setTimeout(() => {
+                    this.isHardwareCoolingDown = false;
+                    // Flush any commands that queued up during the cooldown
+                    if (Object.keys(this.queuedPayload).length > 0) {
+                        this.sendQueuedPayload();
+                    }
+                }, 3500);
+            }
+            else {
+                // If no cooldown, flush next commands immediately
+                if (Object.keys(this.queuedPayload).length > 0) {
+                    this.sendQueuedPayload();
+                }
             }
         }).catch((error) => {
             this.platform.log.debug('Tuya set error/timeout. Re-queueing payload:', error);
