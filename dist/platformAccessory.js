@@ -307,7 +307,6 @@ class TuyaEuromACAccessory {
             return;
         }
         const dataToSend = { ...this.queuedPayload };
-        this.queuedPayload = {}; // Clear pending
         this.isSending = true;
         this.platform.log.debug('Sending to Tuya:', dataToSend);
         this.device.set({
@@ -315,6 +314,12 @@ class TuyaEuromACAccessory {
             data: dataToSend
         }).then(() => {
             this.isSending = false;
+            // Clear successfully sent data from the queue
+            for (const key of Object.keys(dataToSend)) {
+                if (this.queuedPayload[key] === dataToSend[key]) {
+                    delete this.queuedPayload[key];
+                }
+            }
             // Trigger hardware cooldown if this was a heavy mechanical shift
             if (dataToSend['1'] !== undefined || dataToSend['101'] !== undefined) {
                 this.isHardwareCoolingDown = true;
@@ -334,8 +339,6 @@ class TuyaEuromACAccessory {
             }
         }).catch((error) => {
             this.platform.log.debug('Tuya set error/timeout. Re-queueing payload:', error);
-            // Merge failed commands back into the queue (newer values from new calls take precedence)
-            this.queuedPayload = { ...dataToSend, ...this.queuedPayload };
             this.isSending = false;
             this.connected = false;
             this.isConnecting = false;
