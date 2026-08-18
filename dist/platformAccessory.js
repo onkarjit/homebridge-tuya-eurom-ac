@@ -298,8 +298,8 @@ class TuyaEuromACAccessory {
         }
         // Hardware Cooldown Lock
         if (this.isHardwareCoolingDown) {
-            this.platform.log.debug('Hardware is cooling down from mechanical shift. Queuing...');
-            return;
+            this.platform.log.info('Hardware cooling down, strictly queuing and returning...');
+            return; // Do not call tuyaDevice.set() yet
         }
         if (!this.connected) {
             this.platform.log.warn('Device disconnected. Payload queued for reconnect.');
