@@ -23,6 +23,7 @@ export class TuyaEuromACAccessory {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private queuedPayload: Record<string, any> = {};
   private isSending: boolean = false;
+  private tempDebounceTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly platform: TuyaEuromACPlatform,
@@ -141,6 +142,7 @@ export class TuyaEuromACAccessory {
       this.connected = false;
       this.isConnecting = false;
       this.stopHeartbeat();
+      if (this.tempDebounceTimer) clearTimeout(this.tempDebounceTimer);
       this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
@@ -150,6 +152,7 @@ export class TuyaEuromACAccessory {
       this.connected = false;
       this.isConnecting = false;
       this.stopHeartbeat();
+      if (this.tempDebounceTimer) clearTimeout(this.tempDebounceTimer);
       this.device.disconnect(); // Explicitly destroy socket
       this.scheduleReconnect();
     });
@@ -225,7 +228,15 @@ export class TuyaEuromACAccessory {
     // Current Temperature (DP 3)
     if (dps['3'] !== undefined) {
       this.state.currentTemp = dps['3'];
-      this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.state.currentTemp);
+      
+      if (this.tempDebounceTimer) {
+        clearTimeout(this.tempDebounceTimer);
+      }
+      
+      this.tempDebounceTimer = setTimeout(() => {
+        this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.state.currentTemp);
+        this.tempDebounceTimer = undefined;
+      }, 15000); // 15 seconds
     }
 
     // Operating Mode (DP 101)
