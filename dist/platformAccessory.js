@@ -24,6 +24,7 @@ class TuyaEuromACAccessory {
     reconnectTimeout = null;
     heartbeatInterval = null;
     pendingCommandsQueue = [];
+    lastPowerOnTime = 0;
     constructor(platform, accessory, deviceConfig) {
         this.platform = platform;
         this.accessory = accessory;
@@ -335,6 +336,9 @@ class TuyaEuromACAccessory {
         const isActive = value;
         if (this.state.active !== isActive) {
             this.state.active = isActive;
+            if (isActive === 1) {
+                this.lastPowerOnTime = Date.now();
+            }
             this.queueTuyaSet('1', isActive === 1);
             if (isActive === 0) {
                 this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState, this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE);
@@ -372,15 +376,34 @@ class TuyaEuromACAccessory {
     }
     async setTargetHeaterCoolerState(value) {
         const targetMode = value;
-        if (this.state.targetMode !== targetMode) {
+        let tuyaMode = '5'; // Auto by default
+        if (targetMode === this.platform.Characteristic.TargetHeaterCoolerState.COOL)
+            tuyaMode = '1';
+        else if (targetMode === this.platform.Characteristic.TargetHeaterCoolerState.HEAT)
+            tuyaMode = '2';
+        if (this.state.targetMode !== targetMode || this.state.active === 0) {
             this.state.targetMode = targetMode;
-            let tuyaMode = '5'; // Auto by default
-            if (targetMode === this.platform.Characteristic.TargetHeaterCoolerState.COOL)
-                tuyaMode = '1';
-            else if (targetMode === this.platform.Characteristic.TargetHeaterCoolerState.HEAT)
-                tuyaMode = '2';
-            this.queueTuyaSet('101', tuyaMode);
-            this.updateDynamicCurrentState();
+            let delay = 0;
+            if (this.state.active === 0) {
+                this.platform.log.info('AC is off. Powering on before setting mode...');
+                this.state.active = 1;
+                this.lastPowerOnTime = Date.now();
+                this.queueTuyaSet('1', true);
+                delay = 750;
+            }
+            else if (Date.now() - this.lastPowerOnTime < 750) {
+                delay = 750 - (Date.now() - this.lastPowerOnTime);
+            }
+            if (delay > 0) {
+                setTimeout(() => {
+                    this.queueTuyaSet('101', tuyaMode);
+                    this.updateDynamicCurrentState();
+                }, delay);
+            }
+            else {
+                this.queueTuyaSet('101', tuyaMode);
+                this.updateDynamicCurrentState();
+            }
         }
     }
     async getTargetHeaterCoolerState() {
@@ -391,13 +414,32 @@ class TuyaEuromACAccessory {
     }
     async setTargetTemperature(value) {
         const temp = value;
-        if (this.state.targetTemp !== temp) {
+        if (this.state.targetTemp !== temp || this.state.active === 0) {
             this.state.targetTemp = temp;
-            this.queueTuyaSet('2', temp);
             // CRITICAL HACK: Sync both cooling and heating thresholds
             this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, temp);
             this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, temp);
-            this.updateDynamicCurrentState();
+            let delay = 0;
+            if (this.state.active === 0) {
+                this.platform.log.info('AC is off. Powering on before setting temperature...');
+                this.state.active = 1;
+                this.lastPowerOnTime = Date.now();
+                this.queueTuyaSet('1', true);
+                delay = 750;
+            }
+            else if (Date.now() - this.lastPowerOnTime < 750) {
+                delay = 750 - (Date.now() - this.lastPowerOnTime);
+            }
+            if (delay > 0) {
+                setTimeout(() => {
+                    this.queueTuyaSet('2', temp);
+                    this.updateDynamicCurrentState();
+                }, delay);
+            }
+            else {
+                this.queueTuyaSet('2', temp);
+                this.updateDynamicCurrentState();
+            }
         }
     }
     async getTargetTemperature() {
