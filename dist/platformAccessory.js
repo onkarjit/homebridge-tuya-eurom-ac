@@ -19,12 +19,11 @@ class TuyaEuromACAccessory {
         fanSpeed: 100,
         displayUnits: false, // false = C, true = F
     };
-    pendingSetData = {};
     debounceTimeout = null;
     reconnectTimeout = null;
     heartbeatInterval = null;
-    pendingCommandsQueue = [];
-    lastPowerOnTime = 0;
+    queuedPayload = {};
+    isSending = false;
     constructor(platform, accessory, deviceConfig) {
         this.platform = platform;
         this.accessory = accessory;
@@ -110,34 +109,13 @@ class TuyaEuromACAccessory {
             this.isConnecting = false;
             this.startHeartbeat();
             // Process pending commands after a delay to allow crypto handshake
-            if (this.pendingCommandsQueue.length > 0) {
-                this.platform.log.info(`Waiting 2500ms before resending ${this.pendingCommandsQueue.length} queued commands...`);
+            if (Object.keys(this.queuedPayload).length > 0) {
+                this.platform.log.info('Waiting 1000ms before flushing queued payload...');
                 setTimeout(() => {
-                    if (!this.connected)
-                        return;
-                    const queue = [...this.pendingCommandsQueue];
-                    for (const data of queue) {
-                        this.device.set({ multiple: true, data })
-                            .then(() => {
-                            // On success, remove this specific command from the queue
-                            const index = this.pendingCommandsQueue.indexOf(data);
-                            if (index > -1) {
-                                this.pendingCommandsQueue.splice(index, 1);
-                            }
-                        })
-                            .catch((error) => {
-                            this.platform.log.error('Failed to resend queued command, keeping in queue:', error);
-                            // Trigger disconnect & reconnect flow
-                            if (this.connected) {
-                                this.connected = false;
-                                this.isConnecting = false;
-                                this.stopHeartbeat();
-                                this.device.disconnect();
-                                this.scheduleReconnect();
-                            }
-                        });
+                    if (this.connected) {
+                        this.sendQueuedPayload();
                     }
-                }, 2500);
+                }, 1000);
             }
         });
         this.device.on('disconnected', () => {
@@ -196,7 +174,7 @@ class TuyaEuromACAccessory {
             if (!this.connected) {
                 this.connectTuya();
             }
-        }, 10000); // Try to reconnect every 10 seconds to reduce ECONNRESET spam
+        }, 3000); // Try to reconnect every 3 seconds
     }
     updateStateFromTuya(dps) {
         let updated = false;
@@ -288,57 +266,57 @@ class TuyaEuromACAccessory {
     }
     // --- Helpers for queueing set commands to Tuya ---
     queueTuyaSet(dp, value) {
-        this.pendingSetData[dp] = value;
+        this.queuedPayload[dp] = value;
         if (this.debounceTimeout) {
             clearTimeout(this.debounceTimeout);
         }
         // 400ms debounce
         this.debounceTimeout = setTimeout(() => {
-            this.sendPendingSetData();
+            this.sendQueuedPayload();
         }, 400);
     }
-    sendPendingSetData() {
-        const dataToSend = { ...this.pendingSetData };
-        if (Object.keys(dataToSend).length === 0)
+    sendQueuedPayload() {
+        if (Object.keys(this.queuedPayload).length === 0)
             return;
-        this.pendingSetData = {}; // Clear pending
+        // In-flight Mutex
+        if (this.isSending) {
+            this.platform.log.debug('Command already in-flight. Queuing...');
+            return;
+        }
         if (!this.connected) {
-            this.platform.log.warn('Cannot send command to Tuya, device disconnected. Queueing command and triggering reconnect...');
-            this.pendingCommandsQueue.push(dataToSend);
+            this.platform.log.warn('Device disconnected. Payload queued for reconnect.');
             this.scheduleReconnect();
             return;
         }
+        const dataToSend = { ...this.queuedPayload };
+        this.queuedPayload = {}; // Clear pending
+        this.isSending = true;
         this.platform.log.debug('Sending to Tuya:', dataToSend);
-        try {
-            this.device.set({
-                multiple: true,
-                data: dataToSend
-            }).catch((error) => {
-                this.platform.log.debug('Tuya set error/timeout. Queueing command:', error);
-                this.pendingCommandsQueue.push(dataToSend);
-                this.connected = false;
-                this.isConnecting = false;
-                this.device.disconnect();
-                this.scheduleReconnect();
-            });
-        }
-        catch (error) {
-            this.platform.log.debug('Tuya set exception. Queueing command:', error);
-            this.pendingCommandsQueue.push(dataToSend);
+        this.device.set({
+            multiple: true,
+            data: dataToSend
+        }).then(() => {
+            this.isSending = false;
+            // If new commands came in while sending, flush them now
+            if (Object.keys(this.queuedPayload).length > 0) {
+                this.sendQueuedPayload();
+            }
+        }).catch((error) => {
+            this.platform.log.debug('Tuya set error/timeout. Re-queueing payload:', error);
+            // Merge failed commands back into the queue (newer values from new calls take precedence)
+            this.queuedPayload = { ...dataToSend, ...this.queuedPayload };
+            this.isSending = false;
             this.connected = false;
             this.isConnecting = false;
             this.device.disconnect();
             this.scheduleReconnect();
-        }
+        });
     }
     // --- Characteristic Handlers ---
     async setActive(value) {
         const isActive = value;
         if (this.state.active !== isActive) {
             this.state.active = isActive;
-            if (isActive === 1) {
-                this.lastPowerOnTime = Date.now();
-            }
             this.queueTuyaSet('1', isActive === 1);
             if (isActive === 0) {
                 this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState, this.platform.Characteristic.CurrentHeaterCoolerState.INACTIVE);
@@ -383,27 +361,13 @@ class TuyaEuromACAccessory {
             tuyaMode = '2';
         if (this.state.targetMode !== targetMode || this.state.active === 0) {
             this.state.targetMode = targetMode;
-            let delay = 0;
             if (this.state.active === 0) {
-                this.platform.log.info('AC is off. Powering on before setting mode...');
+                this.platform.log.info('AC is off. Powering on along with setting mode...');
                 this.state.active = 1;
-                this.lastPowerOnTime = Date.now();
                 this.queueTuyaSet('1', true);
-                delay = 750;
             }
-            else if (Date.now() - this.lastPowerOnTime < 750) {
-                delay = 750 - (Date.now() - this.lastPowerOnTime);
-            }
-            if (delay > 0) {
-                setTimeout(() => {
-                    this.queueTuyaSet('101', tuyaMode);
-                    this.updateDynamicCurrentState();
-                }, delay);
-            }
-            else {
-                this.queueTuyaSet('101', tuyaMode);
-                this.updateDynamicCurrentState();
-            }
+            this.queueTuyaSet('101', tuyaMode);
+            this.updateDynamicCurrentState();
         }
     }
     async getTargetHeaterCoolerState() {
@@ -419,27 +383,13 @@ class TuyaEuromACAccessory {
             // CRITICAL HACK: Sync both cooling and heating thresholds
             this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, temp);
             this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, temp);
-            let delay = 0;
             if (this.state.active === 0) {
-                this.platform.log.info('AC is off. Powering on before setting temperature...');
+                this.platform.log.info('AC is off. Powering on along with setting temperature...');
                 this.state.active = 1;
-                this.lastPowerOnTime = Date.now();
                 this.queueTuyaSet('1', true);
-                delay = 750;
             }
-            else if (Date.now() - this.lastPowerOnTime < 750) {
-                delay = 750 - (Date.now() - this.lastPowerOnTime);
-            }
-            if (delay > 0) {
-                setTimeout(() => {
-                    this.queueTuyaSet('2', temp);
-                    this.updateDynamicCurrentState();
-                }, delay);
-            }
-            else {
-                this.queueTuyaSet('2', temp);
-                this.updateDynamicCurrentState();
-            }
+            this.queueTuyaSet('2', temp);
+            this.updateDynamicCurrentState();
         }
     }
     async getTargetTemperature() {
