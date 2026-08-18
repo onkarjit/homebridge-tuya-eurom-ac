@@ -306,7 +306,24 @@ class TuyaEuromACAccessory {
             this.scheduleReconnect();
             return;
         }
-        const dataToSend = { ...this.queuedPayload };
+        let dataToSend = {};
+        // Check if we need to split payloads
+        const hasMechanical = this.queuedPayload['1'] !== undefined || this.queuedPayload['101'] !== undefined;
+        const mechanicalKeys = ['1', '101'];
+        const allKeys = Object.keys(this.queuedPayload);
+        const hasNonMechanical = allKeys.some(key => !mechanicalKeys.includes(key));
+        if (hasMechanical && hasNonMechanical) {
+            this.platform.log.info('Packet Splitting: Extracting mechanical commands (1, 101) from bundle...');
+            if (this.queuedPayload['1'] !== undefined) {
+                dataToSend['1'] = this.queuedPayload['1'];
+            }
+            if (this.queuedPayload['101'] !== undefined) {
+                dataToSend['101'] = this.queuedPayload['101'];
+            }
+        }
+        else {
+            dataToSend = { ...this.queuedPayload };
+        }
         this.isSending = true;
         this.platform.log.debug('Sending to Tuya:', dataToSend);
         this.device.set({
