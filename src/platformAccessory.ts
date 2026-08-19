@@ -342,21 +342,16 @@ export class TuyaEuromACAccessory {
 
     let dataToSend: Record<string, any> = {};
 
-    // Check if we need to split payloads
-    const hasMechanical = this.queuedPayload['1'] !== undefined || this.queuedPayload['101'] !== undefined;
-    const mechanicalKeys = ['1', '101'];
-    const allKeys = Object.keys(this.queuedPayload);
-    const hasNonMechanical = allKeys.some(key => !mechanicalKeys.includes(key));
-
-    if (hasMechanical && hasNonMechanical) {
-      this.platform.log.info('Packet Splitting: Extracting mechanical commands (1, 101) from bundle...');
-      if (this.queuedPayload['1'] !== undefined) {
-        dataToSend['1'] = this.queuedPayload['1'];
-      }
-      if (this.queuedPayload['101'] !== undefined) {
-        dataToSend['101'] = this.queuedPayload['101'];
-      }
+    if (this.queuedPayload['1'] !== undefined) {
+      // Priority 1: Power state changes MUST go alone
+      this.platform.log.info('Packet Splitting: Sending Power command first...');
+      dataToSend['1'] = this.queuedPayload['1'];
+    } else if (this.queuedPayload['101'] !== undefined) {
+      // Priority 2: Mode changes MUST go alone
+      this.platform.log.info('Packet Splitting: Sending Mode command first...');
+      dataToSend['101'] = this.queuedPayload['101'];
     } else {
+      // Priority 3: Safe to batch everything else (Temp, Fan, Display)
       dataToSend = { ...this.queuedPayload };
     }
 
